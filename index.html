@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VAPI Live Call Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        .call-container {
+            background: #f5f5f5;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+        }
+        #call-status {
+            margin: 20px 0;
+            font-weight: bold;
+            min-height: 24px;
+        }
+        #transcript {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            min-height: 100px;
+            padding: 10px;
+            text-align: left;
+            margin-top: 20px;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>VAPI Live Call Demo</h1>
+    
+    <div class="call-container">
+        <div>
+            <label for="assistant-id">Assistant ID:</label>
+            <input type="text" id="assistant-id" placeholder="Enter assistant ID">
+        </div>
+        
+        <div id="inbound-section">
+            <button id="start-call">Start Inbound Call</button>
+        </div>
+        
+        <div id="outbound-section" class="hidden">
+            <label for="phone-number">Phone Number:</label>
+            <input type="tel" id="phone-number" placeholder="+1234567890">
+            <button id="start-outbound">Start Outbound Call</button>
+        </div>
+        
+        <button id="end-call" disabled>End Call</button>
+        
+        <div id="call-status">Ready to call</div>
+        
+        <div>
+            <label>
+                <input type="checkbox" id="toggle-outbound"> Show outbound options
+            </label>
+        </div>
+        
+        <h3>Live Transcript</h3>
+        <div id="transcript"></div>
+    </div>
+
+    <script>
+        // DOM elements
+        const startCallBtn = document.getElementById('start-call');
+        const startOutboundBtn = document.getElementById('start-outbound');
+        const endCallBtn = document.getElementById('end-call');
+        const callStatus = document.getElementById('call-status');
+        const transcript = document.getElementById('transcript');
+        const toggleOutbound = document.getElementById('toggle-outbound');
+        const outboundSection = document.getElementById('outbound-section');
+        const inboundSection = document.getElementById('inbound-section');
+        
+        // Variables
+        let socket;
+        let audioContext;
+        let processor;
+        let mediaStream;
+        
+        // Toggle outbound/inbound UI
+        toggleOutbound.addEventListener('change', (e) => {
+            if (e.target.checked) {
+                outboundSection.classList.remove('hidden');
+                inboundSection.classList.add('hidden');
+            } else {
+                outboundSection.classList.add('hidden');
+                inboundSection.classList.remove('hidden');
+            }
+        });
+        
+        // Start inbound call
+        startCallBtn.addEventListener('click', async () => {
+            const assistantId = document.getElementById('assistant-id').value;
+            
+            if (!assistantId) {
+                alert('Please enter an assistant ID');
+                return;
+            }
+            
+            await startCall(assistantId);
+        });
+        
+        // Start outbound call
+        startOutboundBtn.addEventListener('click', async () => {
+            const assistantId = document.getElementById('assistant-id').value;
+            const phoneNumber = document.getElementById('phone-number').value;
+            
+            if (!assistantId || !phoneNumber) {
+                alert('Please enter both assistant ID and phone number');
+                return;
+            }
+            
+            await startCall(assistantId, phoneNumber);
+        });
+        
+        // End call
+        endCallBtn.addEventListener('click', () => {
+            if (socket) {
+                socket.close();
+            }
+            cleanupAudio();
+            updateCallStatus('Call ended');
+            endCallBtn.disabled = true;
+        });
+        
+        // Main call function
+        async function startCall(assistantId, phoneNumber = null) {
+            try {
+                updateCallStatus('Starting call...');
+                
+                // Create call (in a real app, this would call your backend)
+                const callType = phoneNumber ? 'outbound' : 'inbound';
+                const callParams = {
+                    assistantId,
+                    type: callType
+                };
+                
+                if (phoneNumber) {
+                    callParams.customer = { number: phoneNumber };
+                }
+                
+                // In a real implementation, you would fetch this from your backend
+                // For demo purposes, we'll mock the WebSocket URL
+                const websocketUrl = 'wss://example-vapi-websocket-url.com';
+                
+                // Initialize WebSocket connection
+                socket = new WebSocket(websocketUrl);
+                
+                // Set up audio
+                await setupAudio();
+                
+                // WebSocket event handlers
+                socket.onopen = () => {
+                    updateCallStatus('Call connected');
+                    startCallBtn.disabled = true;
+                    startOutboundBtn.disabled = true;
+                    endCallBtn.disabled = false;
+                };
+                
+                socket.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    
+                    if (message.type === 'audio') {
+                        // Play received audio
+                        playAudio(message.audio);
+                    } else if (message.type === 'transcript') {
+                        // Update transcript
+                        transcript.textContent += message.transcript + '\n';
+                        transcript.scrollTop = transcript.scrollHeight;
+                    } else if (message.type === 'status') {
+                        updateCallStatus(message.status);
+                    }
+                };
+                
+                socket.onclose = () => {
+                    updateCallStatus('Call ended');
+                    cleanupAudio();
+                    startCallBtn.disabled = false;
+                    startOutboundBtn.disabled = false;
+                    endCallBtn.disabled = true;
+                };
+                
+                socket.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    updateCallStatus('Connection error');
+                };
+                
+            } catch (error) {
+                console.error('Error starting call:', error);
+                updateCallStatus('Error: ' + error.message);
+                cleanupAudio();
+            }
+        }
+        
+        // Audio setup
+        async function setupAudio() {
+            try {
+                // Get user microphone
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Set up audio context
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const microphone = audioContext.createMediaStreamSource(mediaStream);
+                
+                // Create processor for audio data
+                processor = audioContext.createScriptProcessor(1024, 1, 1);
+                microphone.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                // Process audio and send over WebSocket
+                processor.onaudioprocess = (e) => {
+                    if (socket && socket.readyState === WebSocket.OPEN) {
+                        const audioData = e.inputBuffer.getChannelData(0);
+                        socket.send(JSON.stringify({
+                            type: 'audio',
+                            audio: Array.from(audioData)
+                        }));
+                    }
+                };
+            } catch (error) {
+                console.error('Audio setup error:', error);
+                throw new Error('Could not access microphone');
+            }
+        }
+        
+        // Play received audio
+        function playAudio(audioData) {
+            if (!audioContext) return;
+            
+            const audioBuffer = audioContext.createBuffer(
+                1, 
+                audioData.length, 
+                audioContext.sampleRate
+            );
+            audioBuffer.getChannelData(0).set(audioData);
+            const source = audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioContext.destination);
+            source.start();
+        }
+        
+        // Clean up audio resources
+        function cleanupAudio() {
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+            }
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            if (audioContext && audioContext.state !== 'closed') {
+                audioContext.close();
+                audioContext = null;
+            }
+        }
+        
+        // Update call status display
+        function updateCallStatus(status) {
+            callStatus.textContent = status;
+        }
+    </script>
+</body>
+</html>
