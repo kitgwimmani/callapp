@@ -351,6 +351,20 @@ app.use((err, req, res, next) => {
   res.status(500).send('Something broke!');
 });
 
+app.post('/api/vapi-call', async (req, res) => {
+  try {
+    const response = await axios.post('https://api.vapi.ai/call/web', req.body, {
+      headers: {
+        'Authorization': `Bearer ${process.env.VAPI_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    res.json(response.data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);

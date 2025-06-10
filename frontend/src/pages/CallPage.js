@@ -14,7 +14,7 @@ export default function CallPage() {
   const [callStatus, setCallStatus] = useState('Ready');
   const [isCallActive, setIsCallActive] = useState(false);
   const [transcript, setTranscript] = useState('');
-  
+
   // Refs for audio management
   const audioContextRef = useRef(null);
   const processorRef = useRef(null);
@@ -129,7 +129,7 @@ export default function CallPage() {
       // In a real implementation, you would call your backend to get the WebSocket URL
       // For demo purposes, we'll mock this
       const response = await axios.post('/api/create-vapi-call', {
-        assistantId: 'your-assistant-id', // This would match your generatedAgent
+        assistantId: 'cb90e9b9-2b8c-48f7-9f30-4ca93c8408c4', // This would match your generatedAgent
         customerNumber: customerNumber
       });
 
@@ -148,7 +148,7 @@ export default function CallPage() {
 
       socketRef.current.onmessage = (event) => {
         const message = JSON.parse(event.data);
-        
+
         if (message.type === 'audio') {
           playAudio(message.audio);
         } else if (message.type === 'transcript') {
@@ -183,14 +183,14 @@ export default function CallPage() {
   const setupAudio = async () => {
     try {
       mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
+
       audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
       const microphone = audioContextRef.current.createMediaStreamSource(mediaStreamRef.current);
-      
+
       processorRef.current = audioContextRef.current.createScriptProcessor(1024, 1, 1);
       microphone.connect(processorRef.current);
       processorRef.current.connect(audioContextRef.current.destination);
-      
+
       processorRef.current.onaudioprocess = (e) => {
         if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
           const audioData = e.inputBuffer.getChannelData(0);
@@ -209,10 +209,10 @@ export default function CallPage() {
   // Play received audio
   const playAudio = (audioData) => {
     if (!audioContextRef.current) return;
-    
+
     const audioBuffer = audioContextRef.current.createBuffer(
-      1, 
-      audioData.length, 
+      1,
+      audioData.length,
       audioContextRef.current.sampleRate
     );
     audioBuffer.getChannelData(0).set(audioData);
@@ -228,7 +228,7 @@ export default function CallPage() {
       socketRef.current.close();
       socketRef.current = null;
     }
-    
+
     cleanupAudio();
     setIsCallActive(false);
   };
@@ -271,7 +271,7 @@ export default function CallPage() {
                     pattern="[\d+]{5,15}"
                   />
                   <label htmlFor="customerNumber">Customer Phone Number *</label>
-                  <div className="form-text">Enter the customer's phone number to view call history</div>
+                  <div className="form-text">Interject prompts</div>
                 </div>
               </div>
 
@@ -357,11 +357,12 @@ export default function CallPage() {
                 Save the activity now
               </button>
 
-              <LiveCallButton 
+              <LiveCallButton
                 isActive={isCallActive}
                 onStart={startCall}
                 onEnd={endCall}
                 disabled={!customerNumber || !generatedAgent || loading}
+                customerNumber={customerNumber}
               />
             </div>
 
@@ -370,7 +371,7 @@ export default function CallPage() {
                 <div className="alert alert-info">
                   <strong>Call Status:</strong> {callStatus}
                 </div>
-                
+
                 <div className="card">
                   <div className="card-header">
                     Live Transcript
@@ -418,13 +419,12 @@ export default function CallPage() {
                         </td>
                         <td>
                           <span
-                            className={`badge ${
-                              log.outcome === 'Connected'
+                            className={`badge ${log.outcome === 'Connected'
                                 ? 'bg-success'
                                 : log.outcome === 'Voicemail'
                                   ? 'bg-warning text-dark'
                                   : 'bg-danger'
-                            }`}
+                              }`}
                           >
                             {log.outcome}
                           </span>

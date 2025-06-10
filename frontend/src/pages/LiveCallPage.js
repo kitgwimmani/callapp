@@ -1,124 +1,210 @@
-import React, { useEffect, useRef, useState } from 'react';
-import Vapi from '@vapi-ai/web';
+import React, { useEffect, useState } from 'react';
 import axios from 'axios';
+import { useParams } from 'react-router-dom';
 
 const LiveCallPage = () => {
-  const [isCalling, setIsCalling] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
-  const [error, setError] = useState(null);
-  const [prompt, setPrompt] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [customerDetails, setCustomerDetails] = useState(null);
-  const [isFetchingCustomer, setIsFetchingCustomer] = useState(true);
-  const vapiRef = useRef(null);
+  // Configuration
+  const { customerNumber } = useParams();
+  const config = {
+    phoneNumber: customerNumber,
+    apiBaseUrl: 'https://api.vapi.ai',
+    phoneNumberId: 'c13eff76-4b18-4730-83dc-2d9be75a7298',
+    defaultCustomerName: 'Customer',
+    voiceConfig: {
+      provider: "11labs",
+      voiceId: "p43fx6U8afP2xoq1Ai9f"
+    }
+  };
 
-  const phoneNumber = '+17133303844';
+  const [state, setState] = useState({
+    isCalling: false,
+    isConnected: false,
+    error: null,
+    prompt: '',
+    isLoading: false,
+    customerDetails: null,
+    isFetchingCustomer: true,
+    callStatus: 'idle',
+    callId: null,
+    listenUrl: null
+  });
 
-  useEffect(() => {
-    const vapi = new Vapi({
-      apiKey: process.env.REACT_APP_VAPI_PUBLIC_KEY,
-    });
-
-    vapiRef.current = vapi;
-
-    vapi.on('call-start', () => {
-      setIsConnected(true);
-      setIsLoading(false);
-    });
-
-    vapi.on('call-end', () => {
-      setIsCalling(false);
-      setIsConnected(false);
-      setIsLoading(false);
-    });
-
-    vapi.on('error', (err) => {
-      console.error('Vapi error:', err);
-      setError(err.message || 'Failed to connect to the voice assistant');
-      setIsLoading(false);
-      setIsCalling(false);
-    });
-
-    return () => {
-      if (vapiRef.current) {
-        vapiRef.current.hangUp();
-      }
-    };
-  }, []);
+  const apiKey =  'e0f1360f-cf5e-4cd1-b8d7-78f5fa8582f2';
 
   useEffect(() => {
     const fetchCustomer = async () => {
-      setIsFetchingCustomer(true);
       try {
         const res = await axios.get('http://localhost:8081/customers');
-        const found = res.data.find(c => c.customer_number === phoneNumber);
-        setCustomerDetails(found || null);
+        const found = res.data.find(c => c.customer_number === config.phoneNumber);
+        setState(prev => ({ ...prev, 
+          customerDetails: found || null,
+          isFetchingCustomer: false 
+        }));
       } catch (err) {
         console.error('Failed to fetch customer:', err);
-        setError('Failed to load customer details. Please try again.');
-      } finally {
-        setIsFetchingCustomer(false);
+        setState(prev => ({ ...prev, 
+          error: 'Failed to load customer details',
+          isFetchingCustomer: false 
+        }));
       }
     };
 
     fetchCustomer();
-  }, [phoneNumber]);
+  }, []);
 
-  const startCall = async () => {
-  
-
-    setError(null);
-    setIsCalling(true);
-    setIsLoading(true);
-
+  const pollCallStatus = async (callId) => {
     try {
-      await vapiRef.current.start({
-        agentId: process.env.REACT_APP_VAPI_AGENT_ID,
-        phone: phoneNumber,
-        prompt: prompt.trim(),
-      });
-    } catch (err) {
-      console.error('Start call error:', err);
-      console.error('Full error object:', JSON.stringify(err, null, 2));
-      setError(err.message || 'Failed to start the call');
-      setIsLoading(false);
-      setIsCalling(false);
+      let attempts = 0;
+      const maxAttempts = 30;
+      
+      while (attempts < maxAttempts) {
+        const response = await axios.get(`${config.apiBaseUrl}/call/${callId}`, {
+          headers: { Authorization: `Bearer ${apiKey}` }
+        });
+
+        if (response.data.status === 'connected' && response.data.listenUrl) {
+          return response.data.listenUrl;
+        }
+
+        attempts++;
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        setState(prev => ({ ...prev, 
+          callStatus: `connecting (${attempts}/${maxAttempts})`
+        }));
+      }
+
+      throw new Error('Call connection timed out');
+    } catch (error) {
+      console.error('Error polling call status:', error);
+      throw error;
     }
   };
 
-  const endCall = () => {
-    if (vapiRef.current) {
-      vapiRef.current.hangUp();
+  const startCall = async () => {
+    if (!apiKey) {
+      setState(prev => ({ ...prev, 
+        error: 'API key is missing. Please configure REACT_APP_VAPI_API_KEY in your environment variables.'
+      }));
+      return;
+    }
+
+    setState(prev => ({ ...prev, 
+      error: null,
+      isCalling: true,
+      isLoading: true,
+      callStatus: 'initiating'
+    }));
+
+    try {
+      const payload = {
+        phoneNumberId: config.phoneNumberId,
+        customer: {
+          number: config.phoneNumber,
+          name: state.customerDetails?.name || config.defaultCustomerName
+        },
+        assistant: {
+          name: "SmartSol",
+          voice: config.voiceConfig,
+          ...(state.prompt.trim() && { prompt: state.prompt.trim() })
+        }
+      };
+
+      const response = await axios.post(`${config.apiBaseUrl}/call`, payload, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        }
+      });
+
+      const callId = response.data.id;
+      setState(prev => ({ ...prev, callId, callStatus: 'connecting' }));
+
+      const url = await pollCallStatus(callId);
+      setState(prev => ({ ...prev, 
+        listenUrl: url,
+        isConnected: true,
+        isLoading: false,
+        callStatus: 'connected'
+      }));
+    } catch (error) {
+      console.error("Error initiating call:", error);
+      setState(prev => ({ ...prev, 
+        error: error.response?.data?.message || error.message || 'Failed to start call',
+        isCalling: false,
+        isLoading: false,
+        callStatus: 'failed'
+      }));
+    }
+  };
+
+  const endCall = async () => {
+    if (!state.callId) return;
+
+    try {
+      await axios.post(`${config.apiBaseUrl}/call/${state.callId}/end`, {}, {
+        headers: { Authorization: `Bearer ${apiKey}` }
+      });
+    } catch (error) {
+      console.error("Error ending call:", error);
+    } finally {
+      setState(prev => ({ ...prev, 
+        isCalling: false,
+        isConnected: false,
+        callStatus: 'ended',
+        callId: null,
+        listenUrl: null
+      }));
     }
   };
 
   const handlePromptChange = (e) => {
-    setPrompt(e.target.value);
-    if (error) setError(null);
+    setState(prev => ({ ...prev, 
+      prompt: e.target.value,
+      error: null
+    }));
+  };
+
+  const statusMessages = {
+    idle: 'Ready to call',
+    initiating: 'Initiating call...',
+    connecting: 'Connecting...',
+    connected: 'Call connected',
+    failed: 'Call failed',
+    ended: 'Call ended'
   };
 
   return (
     <div style={styles.container}>
-      <h1>Live Voice Assistant</h1>
+      <h1 style={styles.header}>Live Voice Assistant</h1>
+
+      {!apiKey && (
+        <div style={styles.error}>
+          <p>Configuration Error: API key is missing</p>
+          <p style={styles.errorTip}>
+            Please set REACT_APP_VAPI_API_KEY in your .env file
+          </p>
+        </div>
+      )}
 
       <div style={styles.status}>
-        {isConnected
-          ? 'Connected to Agent'
-          : isLoading
-            ? 'Connecting...'
-            : isCalling
-              ? 'Calling...'
-              : 'Idle'}
+        {statusMessages[state.callStatus]}
+        {state.listenUrl && (
+          <div style={styles.listenLink}>
+            <a href={state.listenUrl} target="_blank" rel="noopener noreferrer">
+              Listen to call
+            </a>
+          </div>
+        )}
       </div>
 
       <div style={styles.infoBox}>
-        <p><strong>Phone:</strong> {phoneNumber}</p>
-        {isFetchingCustomer ? (
+        <p><strong>Phone:</strong> {config.phoneNumber}</p>
+        {state.isFetchingCustomer ? (
           <p>Loading customer details...</p>
-        ) : customerDetails ? (
+        ) : state.customerDetails ? (
           <>
-            <p><strong>Location:</strong> {customerDetails.location || 'N/A'}</p>
-            <p><strong>Gender:</strong> {customerDetails.gender || 'N/A'}</p>
+            <p><strong>Name:</strong> {state.customerDetails.name || 'N/A'}</p>
+            <p><strong>Location:</strong> {state.customerDetails.location || 'N/A'}</p>
           </>
         ) : (
           <p style={{ color: '#e67e22' }}>No customer details found for this number.</p>
@@ -127,38 +213,38 @@ const LiveCallPage = () => {
 
       <div style={styles.inputContainer}>
         <textarea
-          value={prompt}
+          value={state.prompt}
           onChange={handlePromptChange}
-          placeholder="Enter your prompt for the assistant..."
+          placeholder="enter custom prompt"
           style={styles.textarea}
-          disabled={isCalling || isLoading}
+          disabled={state.isCalling || state.isLoading}
         />
       </div>
 
       <div style={styles.buttons}>
-        {!isCalling ? (
+        {!state.isCalling ? (
           <button
             onClick={startCall}
-            style={styles.button}
-            disabled={isLoading}
+            style={styles.startButton}
+            disabled={state.isLoading}
           >
-            {isLoading ? 'Starting...' : 'Start Call'}
+            {state.isLoading ? 'Starting...' : 'Start Call'}
           </button>
         ) : (
           <button
             onClick={endCall}
-            style={{ ...styles.button, background: '#e74c3c' }}
-            disabled={isLoading}
+            style={styles.endButton}
+            disabled={state.isLoading}
           >
             End Call
           </button>
         )}
       </div>
 
-      {error && (
+      {state.error && (
         <div style={styles.error}>
-          <p>Error: {error}</p>
-          {error.includes('Failed to fetch') && (
+          <p>Error: {state.error}</p>
+          {state.error.includes('Failed to fetch') && (
             <p style={styles.errorTip}>
               Tip: Check your internet connection and try again
             </p>
@@ -173,64 +259,99 @@ const styles = {
   container: {
     padding: '2rem',
     textAlign: 'center',
-    fontFamily: 'sans-serif',
+    fontFamily: 'Arial, sans-serif',
     maxWidth: '600px',
     margin: '0 auto',
+    backgroundColor: '#f5f5f5',
+    borderRadius: '8px',
+    boxShadow: '0 2px 10px rgba(0,0,0,0.1)'
+  },
+  header: {
+    color: '#2c3e50',
+    marginBottom: '1.5rem'
   },
   status: {
-    margin: '1rem 0',
+    margin: '1.5rem 0',
     fontSize: '1.2rem',
     fontWeight: 'bold',
-    color: '#555',
+    color: '#3498db',
+    padding: '0.5rem',
+    backgroundColor: '#ebf5fb',
+    borderRadius: '4px'
+  },
+  listenLink: {
+    marginTop: '0.5rem',
+    fontSize: '0.9rem'
   },
   infoBox: {
-    margin: '1rem 0',
-    padding: '1rem',
-    backgroundColor: '#f1f1f1',
+    margin: '1.5rem 0',
+    padding: '1.2rem',
+    backgroundColor: '#fff',
     borderRadius: '8px',
     textAlign: 'left',
-    minHeight: '90px',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
   },
   inputContainer: {
-    margin: '1.5rem 0',
+    margin: '1.5rem 0'
   },
   textarea: {
     width: '100%',
     padding: '1rem',
     fontSize: '1rem',
-    borderRadius: '0.5rem',
+    borderRadius: '6px',
     border: '1px solid #ddd',
     minHeight: '120px',
     resize: 'vertical',
-    fontFamily: 'sans-serif',
+    fontFamily: 'Arial, sans-serif',
+    boxSizing: 'border-box'
   },
   buttons: {
-    marginTop: '1.5rem',
+    marginTop: '2rem',
     display: 'flex',
     justifyContent: 'center',
-    gap: '1rem',
+    gap: '1rem'
   },
-  button: {
+  startButton: {
     padding: '1rem 2rem',
     fontSize: '1rem',
     cursor: 'pointer',
-    background: '#3498db',
+    background: '#2ecc71',
     color: '#fff',
     border: 'none',
-    borderRadius: '0.5rem',
+    borderRadius: '6px',
+    fontWeight: 'bold',
+    transition: 'background 0.2s',
+    ':hover': {
+      background: '#27ae60'
+    }
+  },
+  endButton: {
+    padding: '1rem 2rem',
+    fontSize: '1rem',
+    cursor: 'pointer',
+    background: '#e74c3c',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '6px',
+    fontWeight: 'bold',
+    transition: 'background 0.2s',
+    ':hover': {
+      background: '#c0392b'
+    }
   },
   error: {
     marginTop: '1.5rem',
     color: '#e74c3c',
     padding: '1rem',
     backgroundColor: '#fdedec',
-    borderRadius: '0.5rem',
+    borderRadius: '6px',
+    textAlign: 'left'
   },
   errorTip: {
     marginTop: '0.5rem',
     fontSize: '0.9rem',
-    color: '#7f8c8d',
-  },
+    color: '#7f8c8d'
+  }
 };
 
 export default LiveCallPage;

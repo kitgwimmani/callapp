@@ -20,7 +20,7 @@ export default function App() {
           <Route path="/call-logs" element={<CallLogsPage />} />
           {/* Add new route for the Call Page */}
           <Route path="/call" element={<CallPage />} />
-          <Route path="/live-call" element={<LiveCallPage publicKey={process.env.REACT_APP_VAPI_PUBLIC_KEY} />} />
+          <Route path="/live-call/:customerNumber" element={<LiveCallPage publicKey={process.env.REACT_APP_VAPI_PUBLIC_KEY} />} />
           
 
         </Routes>
